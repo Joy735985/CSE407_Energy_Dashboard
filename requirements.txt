@@ -1,0 +1,3 @@
+flask
+tuya-connector
+gunicorn
