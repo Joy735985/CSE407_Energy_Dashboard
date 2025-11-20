@@ -1,16 +1,15 @@
-# main.py — CSE407 Tuya IoT Energy Monitoring Dashboard
+# main.py — CSE407 Tuya IoT Energy Monitoring Dashboard (Render-friendly)
 
 from flask import Flask, render_template_string, jsonify
 from tuya_connector import TuyaOpenAPI
 import json
-import threading
 import time
 import datetime
 import csv
 import os
 
 # ---------- Tuya Cloud config ----------
-# Prefer environment variables (Render), fall back to hardcoded values for local testing
+# Use environment variables on Render, fall back to local values if needed
 ACCESS_ID = os.getenv("TUYA_ACCESS_ID", "jypequ8ckprw8gdfc3nh")
 ACCESS_KEY = os.getenv("TUYA_ACCESS_KEY", "f3abd2b176674a60a18d58b0c0f1d95e")
 API_ENDPOINT = os.getenv("TUYA_API_ENDPOINT", "https://openapi.tuyaeu.com")
@@ -26,7 +25,7 @@ HTML = """
 <!DOCTYPE html>
 <html>
 <head>
-  <title>CSE407 IoT Energy Dashboard</title>
+  <title>CSE407 IoT Energy Monitoring Dashboard</title>
   <style>
     * { box-sizing: border-box; }
     body {
@@ -241,11 +240,11 @@ HTML = """
     });
   }
 
-  const powerChart  = makeLineChart(ctxPower,  'Power (W)',          s.power);
-  const voltageChart= makeLineChart(ctxVolt,   'Voltage (V)',        s.voltage);
-  const currentChart= makeLineChart(ctxCurr,   'Current (mA)',       s.current);
-  const energyChart = makeLineChart(ctxEnergy, 'Energy Today (kWh)', s.energy);
-  const costChart   = makeLineChart(ctxCost,   'Cost Today (BDT)',   s.cost);
+  const powerChart   = makeLineChart(ctxPower,  'Power (W)',          s.power);
+  const voltageChart = makeLineChart(ctxVolt,   'Voltage (V)',        s.voltage);
+  const currentChart = makeLineChart(ctxCurr,   'Current (mA)',       s.current);
+  const energyChart  = makeLineChart(ctxEnergy, 'Energy Today (kWh)', s.energy);
+  const costChart    = makeLineChart(ctxCost,   'Cost Today (BDT)',   s.cost);
 
   async function refreshData() {
     try {
@@ -294,7 +293,7 @@ CSV_FILE = "tuya_data.csv"
 # Energy & cost tracking
 energy_kwh_today = 0.0
 cost_today = 0.0
-last_poll_time = None
+last_sample_time = None
 current_day = datetime.date.today()
 
 
@@ -336,7 +335,6 @@ def read_status():
             switch = "ON" if value else "OFF"
         elif code in ("cur_power", "power"):
             power = float(value)
-            # Some Tuya plugs report power *10
             if power > 10000:
                 power /= 10
         elif code == "cur_voltage":
@@ -347,61 +345,58 @@ def read_status():
     return resp, switch, round(power, 2), round(voltage, 1), round(current, 1)
 
 
-def poll_loop():
-    """Background loop: poll Tuya, update history, compute energy & cost."""
-    global energy_kwh_today, cost_today, last_poll_time, current_day
+def sample_from_tuya():
+    """
+    Poll Tuya once, update energy & cost, append to history & CSV.
+    This is called from both home() and /data, so no background threads needed.
+    """
+    global energy_kwh_today, cost_today, last_sample_time, current_day
 
-    while True:
-        try:
-            now = datetime.datetime.now()
+    now = datetime.datetime.now()
 
-            # Reset counters at midnight
-            if now.date() != current_day:
-                current_day = now.date()
-                energy_kwh_today = 0.0
-                cost_today = 0.0
-                last_poll_time = None
+    # Reset counters at midnight
+    if now.date() != current_day:
+        current_day = now.date()
+        energy_kwh_today = 0.0
+        cost_today = 0.0
+        last_sample_time = None
 
-            resp, switch, power, voltage, current = read_status()
+    resp, switch, power, voltage, current = read_status()
 
-            # Time delta since last poll
-            if last_poll_time is None:
-                dt_seconds = POLL_INTERVAL_SECONDS
-            else:
-                dt_seconds = (now - last_poll_time).total_seconds()
-                if dt_seconds <= 0:
-                    dt_seconds = POLL_INTERVAL_SECONDS
+    # Time delta since last sample
+    if last_sample_time is None:
+        dt_seconds = POLL_INTERVAL_SECONDS
+    else:
+        dt_seconds = (now - last_sample_time).total_seconds()
+        if dt_seconds <= 0:
+            dt_seconds = POLL_INTERVAL_SECONDS
 
-            last_poll_time = now
+    last_sample_time = now
 
-            # Energy increment:
-            #   energy (kWh) = P(W) * t(hours) / 1000
-            dt_hours = dt_seconds / 3600.0
-            energy_kwh_today += (power * dt_hours) / 1000.0
-            cost_today = energy_kwh_today * COST_PER_KWH
+    # Energy increment (kWh) = P(W) * t(h) / 1000
+    dt_hours = dt_seconds / 3600.0
+    energy_kwh_today += (power * dt_hours) / 1000.0
+    cost_today = energy_kwh_today * COST_PER_KWH
 
-            t_label = now.strftime("%H:%M:%S")
+    t_label = now.strftime("%H:%M:%S")
 
-            point = {
-                "time": t_label,
-                "power": power,
-                "voltage": voltage,
-                "current": current,
-                "energy_kwh_today": round(energy_kwh_today, 4),
-                "cost_today": round(cost_today, 2),
-            }
+    point = {
+        "time": t_label,
+        "power": power,
+        "voltage": voltage,
+        "current": current,
+        "energy_kwh_today": round(energy_kwh_today, 4),
+        "cost_today": round(cost_today, 2),
+    }
 
-            history.append(point)
-            if len(history) > HISTORY_LIMIT:
-                history.pop(0)
+    history.append(point)
+    if len(history) > HISTORY_LIMIT:
+        history.pop(0)
 
-            append_to_csv(point)
-            print("Logged:", point)
+    append_to_csv(point)
+    print("Logged:", point)
 
-        except Exception as e:
-            print("Error in poll_loop:", e)
-
-        time.sleep(POLL_INTERVAL_SECONDS)
+    return switch, power, voltage, current
 
 
 @app.route("/")
@@ -416,7 +411,8 @@ def home():
     current = "-"
 
     try:
-        resp, switch, power, voltage, current = read_status()
+        # Take one fresh sample when page loads
+        switch, power, voltage, current = sample_from_tuya()
         latest_values = json.dumps(
             {
                 "switch": switch,
@@ -461,23 +457,16 @@ def home():
 
 @app.route("/data")
 def data():
+    """
+    Called every 30 seconds from the browser.
+    Each call takes one new sample from Tuya and returns full history.
+    """
+    try:
+        sample_from_tuya()
+    except Exception as e:
+        print("Error in /data polling:", e)
     return jsonify(history)
 
-
-# ---------- Background polling (works on Render & local) ----------
-polling_started = False
-
-
-def start_polling():
-    global polling_started
-    if not polling_started:
-        threading.Thread(target=poll_loop, daemon=True).start()
-        polling_started = True
-        print("Background Tuya polling started")
-
-
-# Start polling thread as soon as module is imported (gunicorn & local)
-start_polling()
 
 if __name__ == "__main__":
     print("Server running → http://127.0.0.1:5000")
