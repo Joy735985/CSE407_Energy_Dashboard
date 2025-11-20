@@ -1,4 +1,4 @@
-# main.py — CSE407 Tuya IoT Energy Monitoring Dashboard (Render-friendly)
+# main.py — CSE407 Tuya IoT Energy Monitoring Dashboard (stylish wide charts)
 
 from flask import Flask, render_template_string, jsonify
 from tuya_connector import TuyaOpenAPI
@@ -32,18 +32,18 @@ HTML = """
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
       padding: 20px;
       margin: 0;
-      background: #f3f4f8;
+      background: #eef2f7;
     }
     .container {
-      max-width: 1150px;
+      max-width: 1200px;
       margin: 0 auto 40px auto;
     }
     .card {
       padding: 20px;
-      background: #fff;
-      border-radius: 12px;
+      background: #ffffff;
+      border-radius: 14px;
       margin: 15px 0;
-      box-shadow: 0 2px 14px rgba(0,0,0,0.06);
+      box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
     }
     .card h2, .card h3 {
       margin: 0 0 12px 0;
@@ -62,10 +62,11 @@ HTML = """
       margin-top: 18px;
     }
     .status-item {
-      background: #f7f9fc;
-      border-radius: 10px;
-      padding: 10px 12px;
+      background: #f9fafb;
+      border-radius: 12px;
+      padding: 12px 14px;
       border: 1px solid #e5e7eb;
+      box-shadow: 0 3px 8px rgba(148, 163, 184, 0.25);
     }
     .status-label {
       font-size: 11px;
@@ -74,32 +75,44 @@ HTML = """
       letter-spacing: 0.06em;
     }
     .status-value {
-      font-size: 18px;
+      font-size: 19px;
       font-weight: 600;
-      margin-top: 4px;
+      margin-top: 5px;
       color: #111827;
     }
     .switch-on { color: #059669; }
     .switch-off { color: #dc2626; }
 
-    .charts-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-      gap: 15px;
+    /* Wide stacked charts */
+    .chart-card-wrapper {
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+      margin-top: 10px;
     }
     .chart-card {
-      padding: 16px 18px 18px 18px;
-      background: #fff;
-      border-radius: 12px;
-      box-shadow: 0 2px 10px rgba(0,0,0,0.04);
+      width: 80%;
+      margin: 0 auto;
+      padding: 18px 20px 20px 20px;
+      border-radius: 16px;
+      background: linear-gradient(135deg, #e0f2fe 0%, #eef2ff 50%, #fefce8 100%);
+      border: 1px solid rgba(148, 163, 184, 0.6);
+      box-shadow: 0 10px 30px rgba(15, 23, 42, 0.25);
     }
     .chart-card h3 {
-      margin-bottom: 8px;
-      font-size: 15px;
+      margin-bottom: 10px;
+      font-size: 16px;
+      color: #0f172a;
+    }
+    .chart-inner {
+      background: #ffffff;
+      border-radius: 12px;
+      padding: 14px 14px 12px 14px;
+      box-shadow: inset 0 0 0 1px #e5e7eb;
     }
     canvas {
       width: 100%;
-      max-height: 260px;
+      max-height: 340px;
     }
     pre {
       background:#111827;
@@ -157,26 +170,40 @@ HTML = """
     </div>
   </div>
 
-  <div class="charts-grid">
+  <div class="chart-card-wrapper">
     <div class="chart-card">
       <h3>Power (W)</h3>
-      <canvas id="powerChart"></canvas>
+      <div class="chart-inner">
+        <canvas id="powerChart"></canvas>
+      </div>
     </div>
+
     <div class="chart-card">
       <h3>Voltage (V)</h3>
-      <canvas id="voltageChart"></canvas>
+      <div class="chart-inner">
+        <canvas id="voltageChart"></canvas>
+      </div>
     </div>
+
     <div class="chart-card">
       <h3>Current (mA)</h3>
-      <canvas id="currentChart"></canvas>
+      <div class="chart-inner">
+        <canvas id="currentChart"></canvas>
+      </div>
     </div>
+
     <div class="chart-card">
       <h3>Energy Today (kWh)</h3>
-      <canvas id="energyChart"></canvas>
+      <div class="chart-inner">
+        <canvas id="energyChart"></canvas>
+      </div>
     </div>
+
     <div class="chart-card">
       <h3>Cost Today (BDT)</h3>
-      <canvas id="costChart"></canvas>
+      <div class="chart-inner">
+        <canvas id="costChart"></canvas>
+      </div>
     </div>
   </div>
 
@@ -212,7 +239,7 @@ HTML = """
 
   const s = splitHistory(initialHistory);
 
-  function makeLineChart(ctx, label, dataArr) {
+  function makeLineChart(ctx, label, dataArr, color) {
     return new Chart(ctx, {
       type: 'line',
       data: {
@@ -220,31 +247,40 @@ HTML = """
         datasets: [{
           label: label,
           data: dataArr,
-          borderWidth: 2,
-          fill: false,
-          tension: 0.2,
+          borderWidth: 2.5,
+          fill: true,
+          tension: 0.28,
+          borderColor: color,
+          backgroundColor: color + '33', // transparent fill
+          pointRadius: 3,
+          pointHoverRadius: 5,
         }]
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
         plugins: {
-          legend: { display: true }
+          legend: {
+            display: true
+          }
         },
         scales: {
           x: {
-            ticks: { maxTicksLimit: 6 }
+            ticks: { maxTicksLimit: 8 }
+          },
+          y: {
+            beginAtZero: false
           }
         }
       }
     });
   }
 
-  const powerChart   = makeLineChart(ctxPower,  'Power (W)',          s.power);
-  const voltageChart = makeLineChart(ctxVolt,   'Voltage (V)',        s.voltage);
-  const currentChart = makeLineChart(ctxCurr,   'Current (mA)',       s.current);
-  const energyChart  = makeLineChart(ctxEnergy, 'Energy Today (kWh)', s.energy);
-  const costChart    = makeLineChart(ctxCost,   'Cost Today (BDT)',   s.cost);
+  const powerChart   = makeLineChart(ctxPower,  'Power (W)',          s.power,  '#3b82f6'); // blue
+  const voltageChart = makeLineChart(ctxVolt,   'Voltage (V)',        s.voltage,'#f97316'); // orange
+  const currentChart = makeLineChart(ctxCurr,   'Current (mA)',       s.current,'#22c55e'); // green
+  const energyChart  = makeLineChart(ctxEnergy, 'Energy Today (kWh)', s.energy, '#a855f7'); // purple
+  const costChart    = makeLineChart(ctxCost,   'Cost Today (BDT)',   s.cost,   '#ec4899'); // pink
 
   async function refreshData() {
     try {
@@ -335,6 +371,7 @@ def read_status():
             switch = "ON" if value else "OFF"
         elif code in ("cur_power", "power"):
             power = float(value)
+            # some plugs report power *10
             if power > 10000:
                 power /= 10
         elif code == "cur_voltage":
@@ -348,7 +385,7 @@ def read_status():
 def sample_from_tuya():
     """
     Poll Tuya once, update energy & cost, append to history & CSV.
-    This is called from both home() and /data, so no background threads needed.
+    Called from both home() and /data, so no background thread is needed.
     """
     global energy_kwh_today, cost_today, last_sample_time, current_day
 
