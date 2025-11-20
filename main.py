@@ -1,4 +1,4 @@
-# main.py — Tuya plug dashboard with graphs (hosting-friendly)
+# main.py — CSE407 Tuya IoT Energy Monitoring Dashboard
 
 from flask import Flask, render_template_string, jsonify
 from tuya_connector import TuyaOpenAPI
@@ -9,13 +9,15 @@ import datetime
 import csv
 import os
 
-# ---------- Tuya Cloud config (use ENV VARS in deployment!) ----------
-ACCESS_ID = os.environ.get("TUYA_ACCESS_ID", "YOUR_LOCAL_TEST_ACCESS_ID")
-ACCESS_KEY = os.environ.get("TUYA_ACCESS_KEY", "YOUR_LOCAL_TEST_ACCESS_KEY")
-API_ENDPOINT = os.environ.get("TUYA_API_ENDPOINT", "https://openapi.tuyaeu.com")
-DEVICE_ID = os.environ.get("TUYA_DEVICE_ID", "YOUR_LOCAL_TEST_DEVICE_ID")
+# ---------- Tuya Cloud config ----------
+# Prefer environment variables (Render), fall back to hardcoded values for local testing
+ACCESS_ID = os.getenv("TUYA_ACCESS_ID", "jypequ8ckprw8gdfc3nh")
+ACCESS_KEY = os.getenv("TUYA_ACCESS_KEY", "f3abd2b176674a60a18d58b0c0f1d95e")
+API_ENDPOINT = os.getenv("TUYA_API_ENDPOINT", "https://openapi.tuyaeu.com")
+DEVICE_ID = os.getenv("TUYA_DEVICE_ID", "bf7cb729c67a2b6c6e7jgd")
 
-POLL_INTERVAL_SECONDS = 30  # Poll every 30 seconds
+POLL_INTERVAL_SECONDS = 30       # Poll every 30 seconds
+COST_PER_KWH = 8.84              # BDT per kWh
 
 # ---------- Flask Setup ----------
 app = Flask(__name__)
@@ -24,54 +26,170 @@ HTML = """
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Tuya Plug Dashboard</title>
+  <title>CSE407 IoT Energy Dashboard</title>
   <style>
-    body { font-family: Arial, sans-serif; padding: 20px; background: #f3f3f3; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+      padding: 20px;
+      margin: 0;
+      background: #f3f4f8;
+    }
+    .container {
+      max-width: 1150px;
+      margin: 0 auto 40px auto;
+    }
     .card {
       padding: 20px;
       background: #fff;
-      border-radius: 8px;
-      max-width: 900px;
-      margin: 20px auto;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      border-radius: 12px;
+      margin: 15px 0;
+      box-shadow: 0 2px 14px rgba(0,0,0,0.06);
     }
-    pre { background:#eee; padding:10px; border-radius:6px; overflow-x:auto; }
-    canvas { width: 100%; max-height: 300px; }
+    .card h2, .card h3 {
+      margin: 0 0 12px 0;
+      font-weight: 600;
+      color: #111827;
+    }
+    .subheading {
+      margin: 0;
+      color: #6b7280;
+      font-size: 13px;
+    }
+    .status-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 12px;
+      margin-top: 18px;
+    }
+    .status-item {
+      background: #f7f9fc;
+      border-radius: 10px;
+      padding: 10px 12px;
+      border: 1px solid #e5e7eb;
+    }
+    .status-label {
+      font-size: 11px;
+      color: #6b7280;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .status-value {
+      font-size: 18px;
+      font-weight: 600;
+      margin-top: 4px;
+      color: #111827;
+    }
+    .switch-on { color: #059669; }
+    .switch-off { color: #dc2626; }
+
+    .charts-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 15px;
+    }
+    .chart-card {
+      padding: 16px 18px 18px 18px;
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.04);
+    }
+    .chart-card h3 {
+      margin-bottom: 8px;
+      font-size: 15px;
+    }
+    canvas {
+      width: 100%;
+      max-height: 260px;
+    }
+    pre {
+      background:#111827;
+      color:#e5e7eb;
+      padding:10px 12px;
+      border-radius:8px;
+      overflow-x:auto;
+      font-size: 12px;
+    }
+    .footer-note {
+      font-size: 11px;
+      color: #9ca3af;
+      margin-top: 4px;
+    }
   </style>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
+<div class="container">
 
   <div class="card">
-    <h2>Tuya Plug Status</h2>
-
+    <h2>CSE407 IoT Energy Monitoring Dashboard</h2>
+    <p class="subheading">
+      Live data from Tuya Cloud (updated every {{ poll_interval }} seconds)
+    </p>
     {% if error %}
-      <p style="color:red;">Error: {{ error }}</p>
-    {% else %}
-      <p><b>Switch:</b> {{ switch }}</p>
-      <p><b>Power:</b> {{ power }} W</p>
+      <p style="color:#b91c1c; margin-top:8px;">Error: {{ error }}</p>
     {% endif %}
+
+    <div class="status-grid">
+      <div class="status-item">
+        <div class="status-label">Switch</div>
+        <div class="status-value {{ 'switch-on' if switch == 'ON' else 'switch-off' }}">{{ switch }}</div>
+      </div>
+      <div class="status-item">
+        <div class="status-label">Power</div>
+        <div class="status-value">{{ power }} W</div>
+      </div>
+      <div class="status-item">
+        <div class="status-label">Voltage</div>
+        <div class="status-value">{{ voltage }} V</div>
+      </div>
+      <div class="status-item">
+        <div class="status-label">Current</div>
+        <div class="status-value">{{ current }} mA</div>
+      </div>
+      <div class="status-item">
+        <div class="status-label">Energy Today</div>
+        <div class="status-value">{{ energy_kwh_today }} kWh</div>
+      </div>
+      <div class="status-item">
+        <div class="status-label">Cost Today</div>
+        <div class="status-value">{{ cost_today }} BDT</div>
+      </div>
+    </div>
   </div>
 
-  <div class="card">
-    <h3>Power (W)</h3>
-    <canvas id="powerChart"></canvas>
-  </div>
-
-  <div class="card">
-    <h3>Voltage (V)</h3>
-    <canvas id="voltageChart"></canvas>
-  </div>
-
-  <div class="card">
-    <h3>Current (mA)</h3>
-    <canvas id="currentChart"></canvas>
+  <div class="charts-grid">
+    <div class="chart-card">
+      <h3>Power (W)</h3>
+      <canvas id="powerChart"></canvas>
+    </div>
+    <div class="chart-card">
+      <h3>Voltage (V)</h3>
+      <canvas id="voltageChart"></canvas>
+    </div>
+    <div class="chart-card">
+      <h3>Current (mA)</h3>
+      <canvas id="currentChart"></canvas>
+    </div>
+    <div class="chart-card">
+      <h3>Energy Today (kWh)</h3>
+      <canvas id="energyChart"></canvas>
+    </div>
+    <div class="chart-card">
+      <h3>Cost Today (BDT)</h3>
+      <canvas id="costChart"></canvas>
+    </div>
   </div>
 
   <div class="card">
     <h3>Raw Values (Latest)</h3>
     <pre>{{ latest_values }}</pre>
+    <div class="footer-note">
+      Data source: Tuya Cloud API • Logged to tuya_data.csv (time, power, voltage, current, energy_kwh_today, cost_today)
+    </div>
   </div>
+
+</div>
 
 <script>
   const initialHistory = {{ history|tojson | safe }};
@@ -81,50 +199,84 @@ HTML = """
       labels: data.map(d => d.time),
       power: data.map(d => d.power),
       voltage: data.map(d => d.voltage),
-      current: data.map(d => d.current)
+      current: data.map(d => d.current),
+      energy: data.map(d => d.energy_kwh_today),
+      cost: data.map(d => d.cost_today)
     };
   }
 
-  const ctxPower = document.getElementById('powerChart').getContext('2d');
-  const ctxVoltage = document.getElementById('voltageChart').getContext('2d');
-  const ctxCurrent = document.getElementById('currentChart').getContext('2d');
+  const ctxPower  = document.getElementById('powerChart').getContext('2d');
+  const ctxVolt   = document.getElementById('voltageChart').getContext('2d');
+  const ctxCurr   = document.getElementById('currentChart').getContext('2d');
+  const ctxEnergy = document.getElementById('energyChart').getContext('2d');
+  const ctxCost   = document.getElementById('costChart').getContext('2d');
 
   const s = splitHistory(initialHistory);
 
-  const powerChart = new Chart(ctxPower, {
-    type: 'line',
-    data: { labels: s.labels, datasets: [{ label: 'Power (W)', data: s.power, borderWidth: 2 }] }
-  });
-
-  const voltageChart = new Chart(ctxVoltage, {
-    type: 'line',
-    data: { labels: s.labels, datasets: [{ label: 'Voltage (V)', data: s.voltage, borderWidth: 2 }] }
-  });
-
-  const currentChart = new Chart(ctxCurrent, {
-    type: 'line',
-    data: { labels: s.labels, datasets: [{ label: 'Current (mA)', data: s.current, borderWidth: 2 }] }
-  });
-
-  async function refreshData() {
-    const res = await fetch("/data");
-    const json = await res.json();
-    const d = splitHistory(json);
-
-    powerChart.data.labels = d.labels;
-    powerChart.data.datasets[0].data = d.power;
-    powerChart.update();
-
-    voltageChart.data.labels = d.labels;
-    voltageChart.data.datasets[0].data = d.voltage;
-    voltageChart.update();
-
-    currentChart.data.labels = d.labels;
-    currentChart.data.datasets[0].data = d.current;
-    currentChart.update();
+  function makeLineChart(ctx, label, dataArr) {
+    return new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: s.labels,
+        datasets: [{
+          label: label,
+          data: dataArr,
+          borderWidth: 2,
+          fill: false,
+          tension: 0.2,
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: true }
+        },
+        scales: {
+          x: {
+            ticks: { maxTicksLimit: 6 }
+          }
+        }
+      }
+    });
   }
 
-  setInterval(refreshData, 30000); // refresh every 30 sec
+  const powerChart  = makeLineChart(ctxPower,  'Power (W)',          s.power);
+  const voltageChart= makeLineChart(ctxVolt,   'Voltage (V)',        s.voltage);
+  const currentChart= makeLineChart(ctxCurr,   'Current (mA)',       s.current);
+  const energyChart = makeLineChart(ctxEnergy, 'Energy Today (kWh)', s.energy);
+  const costChart   = makeLineChart(ctxCost,   'Cost Today (BDT)',   s.cost);
+
+  async function refreshData() {
+    try {
+      const res = await fetch("/data");
+      const json = await res.json();
+      const d = splitHistory(json);
+
+      powerChart.data.labels   = d.labels;
+      voltageChart.data.labels = d.labels;
+      currentChart.data.labels = d.labels;
+      energyChart.data.labels  = d.labels;
+      costChart.data.labels    = d.labels;
+
+      powerChart.data.datasets[0].data   = d.power;
+      voltageChart.data.datasets[0].data = d.voltage;
+      currentChart.data.datasets[0].data = d.current;
+      energyChart.data.datasets[0].data  = d.energy;
+      costChart.data.datasets[0].data    = d.cost;
+
+      powerChart.update();
+      voltageChart.update();
+      currentChart.update();
+      energyChart.update();
+      costChart.update();
+    } catch (e) {
+      console.error("Failed to refresh charts:", e);
+    }
+  }
+
+  // refresh every poll interval
+  setInterval(refreshData, {{ poll_interval }} * 1000);
 </script>
 
 </body>
@@ -139,21 +291,34 @@ history = []
 HISTORY_LIMIT = 200
 CSV_FILE = "tuya_data.csv"
 
-# guard variable so we don't start multiple threads
-_poll_thread_started = False
-_poll_lock = threading.Lock()
+# Energy & cost tracking
+energy_kwh_today = 0.0
+cost_today = 0.0
+last_poll_time = None
+current_day = datetime.date.today()
 
 
 def append_to_csv(point):
     write_header = not os.path.exists(CSV_FILE)
     with open(CSV_FILE, "a", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["time", "power", "voltage", "current"])
+        writer = csv.DictWriter(
+            f,
+            fieldnames=[
+                "time",
+                "power",
+                "voltage",
+                "current",
+                "energy_kwh_today",
+                "cost_today",
+            ],
+        )
         if write_header:
             writer.writeheader()
         writer.writerow(point)
 
 
 def read_status():
+    """Read current status from Tuya Cloud."""
     resp = openapi.get(f"/v1.0/devices/{DEVICE_ID}/status")
     if not resp.get("success"):
         raise RuntimeError(resp.get("msg", "API failed"))
@@ -171,6 +336,7 @@ def read_status():
             switch = "ON" if value else "OFF"
         elif code in ("cur_power", "power"):
             power = float(value)
+            # Some Tuya plugs report power *10
             if power > 10000:
                 power /= 10
         elif code == "cur_voltage":
@@ -178,16 +344,52 @@ def read_status():
         elif code == "cur_current":
             current = float(value)
 
-    return resp, switch, round(power, 2), voltage, current
+    return resp, switch, round(power, 2), round(voltage, 1), round(current, 1)
 
 
 def poll_loop():
+    """Background loop: poll Tuya, update history, compute energy & cost."""
+    global energy_kwh_today, cost_today, last_poll_time, current_day
+
     while True:
         try:
-            resp, switch, power, voltage, current = read_status()
-            t = datetime.datetime.now().strftime("%H:%M:%S")
+            now = datetime.datetime.now()
 
-            point = {"time": t, "power": power, "voltage": voltage, "current": current}
+            # Reset counters at midnight
+            if now.date() != current_day:
+                current_day = now.date()
+                energy_kwh_today = 0.0
+                cost_today = 0.0
+                last_poll_time = None
+
+            resp, switch, power, voltage, current = read_status()
+
+            # Time delta since last poll
+            if last_poll_time is None:
+                dt_seconds = POLL_INTERVAL_SECONDS
+            else:
+                dt_seconds = (now - last_poll_time).total_seconds()
+                if dt_seconds <= 0:
+                    dt_seconds = POLL_INTERVAL_SECONDS
+
+            last_poll_time = now
+
+            # Energy increment:
+            #   energy (kWh) = P(W) * t(hours) / 1000
+            dt_hours = dt_seconds / 3600.0
+            energy_kwh_today += (power * dt_hours) / 1000.0
+            cost_today = energy_kwh_today * COST_PER_KWH
+
+            t_label = now.strftime("%H:%M:%S")
+
+            point = {
+                "time": t_label,
+                "power": power,
+                "voltage": voltage,
+                "current": current,
+                "energy_kwh_today": round(energy_kwh_today, 4),
+                "cost_today": round(cost_today, 2),
+            }
 
             history.append(point)
             if len(history) > HISTORY_LIMIT:
@@ -197,62 +399,74 @@ def poll_loop():
             print("Logged:", point)
 
         except Exception as e:
-            print("Error:", e)
+            print("Error in poll_loop:", e)
 
         time.sleep(POLL_INTERVAL_SECONDS)
 
 
-def ensure_poll_thread():
-    global _poll_thread_started
-    with _poll_lock:
-        if not _poll_thread_started:
-            t = threading.Thread(target=poll_loop, daemon=True)
-            t.start()
-            _poll_thread_started = True
-            print("Background poll thread started.")
-
-
 @app.route("/")
 def home():
-    # start background polling on first request (works with gunicorn)
-    ensure_poll_thread()
+    global energy_kwh_today, cost_today
 
     error = None
     latest_values = "{}"
     switch = "-"
     power = "-"
+    voltage = "-"
+    current = "-"
 
     try:
         resp, switch, power, voltage, current = read_status()
         latest_values = json.dumps(
-            {"switch": switch, "power": power, "voltage": voltage, "current": current},
-            indent=2
+            {
+                "switch": switch,
+                "power": power,
+                "voltage": voltage,
+                "current": current,
+                "energy_kwh_today": round(energy_kwh_today, 4),
+                "cost_today": round(cost_today, 2),
+            },
+            indent=2,
         )
     except Exception as e:
         error = str(e)
 
     if not history:
         now = datetime.datetime.now().strftime("%H:%M:%S")
-        history.append({"time": now, "power": 0, "voltage": 0, "current": 0})
+        history.append(
+            {
+                "time": now,
+                "power": 0,
+                "voltage": 0,
+                "current": 0,
+                "energy_kwh_today": 0,
+                "cost_today": 0,
+            }
+        )
 
     return render_template_string(
         HTML,
         error=error,
         switch=switch,
         power=power,
+        voltage=voltage,
+        current=current,
+        energy_kwh_today=round(energy_kwh_today, 4),
+        cost_today=round(cost_today, 2),
         history=history,
-        latest_values=latest_values
+        latest_values=latest_values,
+        poll_interval=POLL_INTERVAL_SECONDS,
     )
 
 
-@app.route("/data")
 @app.route("/data")
 def data():
     return jsonify(history)
 
 
-# ---------- Background polling (runs on both local & Render) ----------
+# ---------- Background polling (works on Render & local) ----------
 polling_started = False
+
 
 def start_polling():
     global polling_started
@@ -262,10 +476,9 @@ def start_polling():
         print("Background Tuya polling started")
 
 
-# start polling thread as soon as module is imported
+# Start polling thread as soon as module is imported (gunicorn & local)
 start_polling()
 
 if __name__ == "__main__":
     print("Server running → http://127.0.0.1:5000")
     app.run(debug=True)
-
